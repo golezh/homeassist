@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "name": "AVR",
+            "compilerPath": "d:/program/gcc/bin/avr-gcc.exe",
+            "compilerArgs": [
+                "-mmcu=atmega8535"
+            ],
+            "includePath": [
+                "${workspaceFolder}/**",
+                "d:/program/gcc/avr/include",
+                "d:/program/gcc/avr/include/avr"
+            ],
+            "defines": [
+                "__AVR_ATmega8535__",
+                "F_CPU=4000000UL"
+            ],
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-gcc-x64"
+        }
+    ],
+    "version": 4
+}
