@@ -32,15 +32,21 @@
 extern volatile unsigned char temperature[7];
 extern volatile unsigned char voltage[7];
 uint32_t previous_time = 0;
-volatile enum SystemState active_state = STATE_IDLE;
-enum ValveState
+uint_fast8_t sensor_index = 0;
+bool sensor_active = false;
+#define Timeout 5*10; // 10 seconds timeout for valve operation
+static   uint16_t timeout = Timeout;
+static volatile bool leak_trigger = false;
+typedef enum 
 {
     VALVE_CLOSED = 0,
     VALVE_OPENED,
     VALVE_OPENING,
     VALVE_CLOSING
-} valve_state = VALVE_CLOSED;
-enum SystemState
+} valve_state;
+valve_state current_valve_state = VALVE_CLOSED;
+
+typedef enum 
 {
     STATE_IDLE = 0,
     STATE_START,
@@ -53,7 +59,8 @@ enum SystemState
     STATE_ERROR,
     STATE_OPEN,
     STATE_CLOSE
-} system_state = STATE_IDLE;
+} sys_state;
+sys_state active_state = STATE_IDLE;
 
 struct Button_t
 {
@@ -86,7 +93,7 @@ struct Sensor_t
 };
 struct SensorValve_t {
     volatile uint8_t pin;
-    enum ValveState valve_state;
+    valve_state valve_state;
 }SensorsValve[] = {
     {SENSOR6, VALVE_CLOSED},
     {SENSOR7, VALVE_CLOSED}
@@ -173,16 +180,13 @@ void check_sensors(volatile uint8_t *pin_reg)
     if((*pin_reg & 0x2) == 0){
         transmitString_F(PSTR("\n\r2-th sensor is active."));
         Sensors[0].leak_active = 1;
-        active_state = STATE_LEAK_DETECTED;
     }else{
         Sensors[0].leak_active = 0;
-        active_state = STATE_LEAK_CLEARED;
     }
     /*Bathroom 1*/
     if((*pin_reg & 0x4) == 0){
         transmitString_F(PSTR("\n\r3-rd sensor is active."));
         Sensors[1].leak_active = 1;
-        active_state = STATE_LEAK_DETECTED;
     }else{
         Sensors[1].leak_active = 0;
     }
@@ -190,21 +194,19 @@ void check_sensors(volatile uint8_t *pin_reg)
     if((*pin_reg & 0x8) == 0){
         transmitString_F(PSTR("\n\r4-th sensor is active."));
         Sensors[2].leak_active = 1;
-        active_state = STATE_LEAK_DETECTED;
     }else{
         Sensors[2].leak_active = 0;
     }
     /*not using this sensor for now*/
     if((*pin_reg & 0x10) == 0){
         transmitString_F(PSTR("\n\r5-th sensor is active."));
-        Sensors[2].leak_active = 1;
-        active_state = STATE_LEAK_DETECTED;
+        Sensors[3].leak_active = 1;
     }else{
-        Sensors[2].leak_active = 0;
+        Sensors[3].leak_active = 0;
     }
     if((*pin_reg & 0x20) == 0){
         transmitString_F(PSTR("\n\rValve is opened."));
-        active_state = STATE_OPEN;
+        //active_state = STATE_OPEN;
         SensorsValve[0].valve_state = VALVE_OPENED; //indicate that the valve is opened
     }
     if((*pin_reg & 0x40) == 0){
@@ -212,21 +214,29 @@ void check_sensors(volatile uint8_t *pin_reg)
         active_state = STATE_CLOSE;
         SensorsValve[0].valve_state = VALVE_CLOSED; //indicate that the valve is closed
     }
-    
 }
 void check_leakage(){
-    if(Sensors[1].leak_active || Sensors[2].leak_active || Sensors[3].leak_active || Sensors[4].leak_active){
+    if(Sensors[1].leak_active || Sensors[2].leak_active 
+        || Sensors[3].leak_active || Sensors[4].leak_active){
         transmitString_F(PSTR("\n\rLeakage detected!"));
-        if(SensorsValve[0].valve_state == VALVE_OPENED){
+        leak_trigger = true;
+        if(SensorsValve[0].valve_state == VALVE_OPENED && active_state != STATE_VALVE_CLOSING){
             transmitString_F(PSTR("\n\rClosing the valve."));
             active_state = STATE_CLOSE;
         }
     }else{
-        transmitString_F(PSTR("\n\rNo leakage detected."));
-        active_state = STATE_LEAK_CLEARED;
+        if(leak_trigger){
+            transmitString_F(PSTR("\n\rLeakage cleared!"));
+            leak_trigger = false;
+        }
+        active_state = STATE_IDLE;
     }
 }
 void valve_open(){
+    if(SensorsValve[0].valve_state == VALVE_OPENED){
+        transmitString_F(PSTR("\n\rValve is already opened."));
+        return; 
+    }
     relay_on(1); // Open the valve
     Operation_t.current_relay = 1; // Set current relay to 1 for valve open
     SensorsValve[0].valve_state = VALVE_OPENING; //indicate that the valve start opening
@@ -234,6 +244,10 @@ void valve_open(){
     transmitString_F(PSTR("\n\rOpening the valve."));
 }
 void valve_close(){
+    if(SensorsValve[0].valve_state == VALVE_CLOSED){
+        transmitString_F(PSTR("\n\rValve is already closed."));
+        return;
+    }
     relay_on(2); // Close the valve
     Operation_t.current_relay = 2; // Set current relay to 2 for valve close
     SensorsValve[0].valve_state = VALVE_CLOSING; //indicate that the valve start closing
@@ -243,69 +257,74 @@ void valve_close(){
 void call_state_machine(){
     switch (active_state)
     {
-    case STATE_START:
-        transmitString_F(PSTR("\n\rSystem started!"));
-        if(SensorsValve[0].valve_state == VALVE_OPENED){
-            transmitString_F(PSTR("\n\rValve is opened!"));
-            active_state = STATE_OPEN;
-        }
-        active_state = STATE_IDLE;
-        break;
-    case STATE_IDLE:
-        /* code */
-        break;
-    case STATE_LEAK_DETECTED:
-        transmitString_F(PSTR("\n\rLeak detected!"));
-        check_leakage();
-        active_state = STATE_IDLE;
-        break;
-    case STATE_LEAK_CLEARED:
-        transmitString_F(PSTR("\n\rLeak cleared!"));
-        valve_open();
-        active_state = STATE_IDLE;
-        break;
-    case STATE_OPEN:
-        transmitString_F(PSTR("\n\rValve is opened!"));
-        if(Operation_t.Action == 1){
+        case STATE_START:
+            transmitString_F(PSTR("\n\rSystem started!"));
+            if(SensorsValve[0].valve_state == VALVE_OPENED){
+                transmitString_F(PSTR("\n\rSTART: Valve is opened!"));
+                active_state = STATE_IDLE;
+            }
+            active_state = STATE_IDLE;
+            break;
+        case STATE_IDLE:
+            transmitString_F(PSTR("-"));
+            timeout = Timeout; // Reset timeout counter in IDLE state
+            if(leak_trigger){
+                active_state = STATE_CLOSE;
+            }
+            break;
+        case STATE_LEAK_DETECTED:
+            transmitString_F(PSTR("\n\rLeak detected!"));
+            active_state = STATE_IDLE;
+            break;
+        case STATE_LEAK_CLEARED:
+            transmitString_F(PSTR("\n\rLeak cleared!"));
+            valve_open();
+            active_state = STATE_IDLE;
+            break;
+        case STATE_OPEN:
+            transmitString_F(PSTR("\n\rSTATE_OPEN: Valve is opened!"));
+            valve_open();
+            active_state = STATE_IDLE;
+            break;
+        case STATE_CLOSE:
+            transmitString_F(PSTR("\n\rValve is closed!"));
+            valve_close();
+            active_state = STATE_VALVE_CLOSING;
+            break;
+        case STATE_VALVE_OPENING:
+            transmitString_F(PSTR("\n\rValve is opening!"));
+            if(SensorsValve[0].valve_state == VALVE_OPENED){
+                relay_off(Operation_t.current_relay); // Turn off the relay after closing the valve
+                active_state = STATE_IDLE;
+            }else{
+                timeout--;
+                if(timeout == 0){
+                    transmitString_F(PSTR("\n\rValve opening timeout!"));
+                    active_state = STATE_ERROR;
+                }
+            }
+            break;
+        case STATE_VALVE_CLOSING:
+            transmitString_F(PSTR("\n\rValve is closing!"));
+            if(SensorsValve[0].valve_state == VALVE_CLOSED){
+                relay_off(Operation_t.current_relay); // Turn off the relay after closing the valve
+                //Operation_t.Action = 0; // Reset action after closing the valve
+                active_state = STATE_IDLE; 
+            }else{
+                timeout--;
+                if(timeout == 0){
+                    transmitString_F(PSTR("\n\rValve closing timeout!"));
+                    active_state = STATE_ERROR;
+                }
+            }
+            break;
+        case STATE_ERROR:
+            transmitString_F(PSTR("\n\rError detected!"));
             relay_off(Operation_t.current_relay); // Turn off the relay after closing the valve
-            Operation_t.Action = 0; // Reset action after opening the valve
-        }else{
-         active_state = STATE_IDLE;
-        }
-        break;
+            break;
 
-    case STATE_CLOSE:
-        transmitString_F(PSTR("\n\rValve is closed!"));
-        if(Operation_t.Action == 1){
-            relay_off(Operation_t.current_relay); // Turn off the relay after closing the valve
-            Operation_t.Action = 0; // Reset action after closing the valve 
-        }else{
-         active_state = STATE_IDLE;
-        }
-        break;
-    case STATE_VALVE_OPENING:
-        transmitString_F(PSTR("\n\rValve is opening!"));
-        if(Operation_t.Action == 1){
-            relay_off(Operation_t.current_relay); // Turn off the relay after closing the valve
-            Operation_t.Action = 0; // Reset action after opening the valve
-        }else{
-         active_state = STATE_IDLE;
-        }
-        break;
-    case STATE_VALVE_CLOSING:
-        transmitString_F(PSTR("\n\rValve is closing!"));
-        if(Operation_t.Action == 1){
-            relay_off(Operation_t.current_relay); // Turn off the relay after closing the valve
-            Operation_t.Action = 0; // Reset action after closing the valve 
-        }else{
-         active_state = STATE_IDLE;
-        }
-    case STATE_ERROR:
-        transmitString_F(PSTR("\n\rError detected!"));
-        break;
-
-    default:
-        break;
+        default:
+            break;
     }
 }
 int main( void )
@@ -318,22 +337,20 @@ int main( void )
   transmitString_F (PSTR("\n\r****************************************************\n\r"));
   //Enable Global Interrupts
   sei();
-  uint8_t current_relay = 0;
-  bool sensor_active = false;
+ //uint8_t current_relay = 0;
   Operation_t.Open = 0;
   Operation_t.Close = 0;
-  relay_only(current_relay);
-  uint8_t sensor_index = 0;
+  //relay_only(current_relay);
   DDRC  = 0x00; // 0 - input
   PORTC = 0xFF; // 1 pins to power via 10k resistor
-
+  leak_trigger = false;
   while (1)
   {
-
     if ((millis() - previous_time) >= 200)
     {
         previous_time = millis();
         check_sensors(&PINC);
+        check_leakage();
         call_state_machine();
     }
   }      
