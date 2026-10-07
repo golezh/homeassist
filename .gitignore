@@ -1,3 +1,10 @@
-*.o
-*.d
-*.elf
+**.o
+**.d
+**.elf
+**.bin
+**.hex
+**.map
+**.lst
+build/keytest.elf
+build/keytest.hex
+build/keytest.map
