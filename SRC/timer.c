@@ -1,6 +1,5 @@
 #ifndef F_CPU
-#warning "F_CPU is not defined. Defaulting to 1000000UL"
-#define F_CPU 1000000UL
+#error "F_CPU is not defined (expected -DF_CPU=4000000UL from the Makefile)"
 #endif
 
 #include <avr/io.h>
@@ -8,61 +7,34 @@
 #include <util/atomic.h>
 #include "timer.h"
 
+#if F_CPU != 4000000UL
+#error "timer2_init_1ms() is calculated for F_CPU = 4 MHz"
+#endif
+
 static volatile uint32_t g_millis = 0;
 
 /*
- * Timer1 CTC calculation:
- *
- * Timer frequency = F_CPU / prescaler
- * Required interrupt frequency = 1000 Hz
- *
- * We use prescaler = 1.
- *
- * OCR1A = F_CPU / 1000 - 1
- *
- * The formula below rounds the value if F_CPU is not exactly divisible by 1000.
+ * Does not touch the global interrupt flag: the caller enables
+ * interrupts with sei() once all peripherals are initialized.
  */
-#define TIMER1_PRESCALER       1UL
-#define TIMER1_COMPARE_VALUE   (((F_CPU / TIMER1_PRESCALER) + 500UL) / 1000UL - 1UL)
-
-void timer1_init_1ms(void)
+void timer2_init_1ms(void)
 {
-    cli();
-
     /*
-     * Stop Timer1 before configuration
+     * Timer2 CTC mode
+     * F_CPU = 4 MHz, prescaler = 32 -> 125 kHz
+     * OCR2 = 124 -> 125 counts -> exactly 1 ms
      */
-    TCCR1A = 0x00;
-    TCCR1B = 0x00;
+    TCCR2 = 0x00;
+    TCNT2 = 0;
+    OCR2  = 124;
 
-    /*
-     * Clear counter
-     */
-    TCNT1 = 0;
+    /* WGM21 = 1 -> CTC, CS21 = 1, CS20 = 1 -> prescaler 32 */
+    TCCR2 = (1 << WGM21) | (1 << CS21) | (1 << CS20);
 
-    /*
-     * Set compare value for 1 ms
-     */
-    OCR1A = (uint16_t)TIMER1_COMPARE_VALUE;
-
-    /*
-     * Enable Timer1 Compare A interrupt
-     */
-    TIMSK |= (1 << OCIE1A);
-
-    /*
-     * CTC mode:
-     * WGM12 = 1
-     *
-     * Clock source:
-     * CS10 = 1 ? prescaler = 1
-     */
-    TCCR1B = (1 << WGM12) | (1 << CS10);
-
-    sei();
+    TIMSK |= (1 << OCIE2);
 }
 
-ISR(TIMER1_COMPA_vect)
+ISR(TIMER2_COMP_vect)
 {
     g_millis++;
 }

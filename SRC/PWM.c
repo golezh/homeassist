@@ -3,10 +3,42 @@
 
 void pwm_init(void)
 {
-  TCCR1A = (1<<WGM11) | (1<<WGM10) | (1<<COM1A1); // 10bits resolution, 0 when count up
-  TCCR1B = (0<<CS12) | (0<<CS11) | (1<<CS10);     // prescaler CK
-  TCNT1 =0;                                       // Start count from 0
-  OCR1A = 0xFF;                                   // initial PWM value
+    /*
+     * OC1A = PD5
+     */
+    DDRD |= (1 << PD5);
 
-  ACSR = (1<<ACD);
+    /*
+     * Timer1 Phase Correct PWM, 10-bit
+     * Non-inverting output on OC1A
+     */
+    TCCR1A = (1 << WGM11) | (1 << WGM10) | (1 << COM1A1);
+
+    /*
+     * No prescaler
+     */
+    TCCR1B = (1 << CS10);
+
+    TCNT1 = 0;
+
+    /*
+     * Initial duty cycle about 25%
+     * Range: 0..1023
+     */
+    OCR1A = 255;
+
+    /*
+     * Disable analog comparator
+     */
+    ACSR = (1 << ACD);
+}
+
+void pwm_set(uint16_t value)
+{
+    if (value > 1023)
+    {
+        value = 1023;
+    }
+
+    OCR1A = value;
 }

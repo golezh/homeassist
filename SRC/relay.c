@@ -4,11 +4,15 @@
 
 // ------------------------------------------------------------
 // Relay pin definitions
+//
+// NOTE: RELAY4 used to be on PC6, but PC6 is the "valve closed" limit
+// switch input. Driving it as an output shorts the switch, so that
+// relay was removed from the table. If it is ever needed, move it to a
+// free pin and add it back here.
 // ------------------------------------------------------------
-#define RELAY1  PA4
-#define RELAY2  PA3
+#define RELAY1  PA4     // index 0 - valve CLOSE
+#define RELAY2  PA3     // index 1 - valve OPEN
 #define RELAY3  PA2
-#define RELAY4  PC6
 #define RELAY5  PA0
 #define RELAY6  PB0
 #define RELAY7  PB1
@@ -21,12 +25,11 @@ typedef struct
     uint8_t pin;
 } Relay_t;
 
-static Relay_t relays[] =
+static const Relay_t relays[] =
 {
     { &DDRA, &PORTA, RELAY1 },
     { &DDRA, &PORTA, RELAY2 },
     { &DDRA, &PORTA, RELAY3 },
-    { &DDRC, &PORTC, RELAY4 },
     { &DDRA, &PORTA, RELAY5 },
     { &DDRB, &PORTB, RELAY6 },
     { &DDRB, &PORTB, RELAY7 },
@@ -46,11 +49,10 @@ void relay_init(void)
 
     for (i = 0; i < RELAY_COUNT_INTERNAL; i++)
     {
-        // Set relay pin as output
-        *relays[i].ddr |= (uint8_t)(1U << relays[i].pin);
-
-        // Switch relay off initially
+        // First set the "off" level in PORT, only then switch the pin to
+        // output. Otherwise an active-LOW relay clicks on for a moment.
         relay_off(i);
+        *relays[i].ddr |= (uint8_t)(1U << relays[i].pin);
     }
 }
 

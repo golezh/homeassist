@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-void timer1_init_1ms(void);
+void timer2_init_1ms(void);
 uint32_t millis(void);
 
 #endif
