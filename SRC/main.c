@@ -27,8 +27,13 @@
 #include "timer.h"
 #include "LCD_screen.h"
 #include "valve_ctrl.h"
+#include "proto.h"
 
-#define FW_VERSION "0.2.0"
+/* 1 = 20x4 I2C LCD is connected to this controller.
+   0 = no LCD (the display moved to the ESP): frees ~2 KB of flash. */
+#ifndef USE_LCD
+#define USE_LCD 1
+#endif
 
 /* ---------------- Timing ---------------- */
 #define LOGIC_PERIOD_MS       200U     // sensors + state machine
@@ -80,9 +85,9 @@ static const leak_sensor_cfg_t leak_cfg[] =
 /*  Hooks for valve_ctrl                                                   */
 /* ======================================================================= */
 
-void hal_log_P(const char *msg)
+void hal_log_P(const char *msg_P, const char *arg_P)
 {
-    transmitString_F(msg);
+    log_P(msg_P, arg_P);
 }
 
 void hal_alarm_store(bool latched)
@@ -101,7 +106,7 @@ void hal_motor(motor_dir_t dir)
 
     if (dir == MOTOR_STOP)
     {
-        transmitString_F(PSTR("\n\rMotor: stop"));
+        log_P(PSTR("Motor: stop"), NULL);
         return;
     }
 
@@ -110,12 +115,12 @@ void hal_motor(motor_dir_t dir)
     if (dir == MOTOR_OPEN)
     {
         relay_on(RELAY_VALVE_OPEN);
-        transmitString_F(PSTR("\n\rMotor: opening"));
+        log_P(PSTR("Motor: opening"), NULL);
     }
     else
     {
         relay_on(RELAY_VALVE_CLOSE);
-        transmitString_F(PSTR("\n\rMotor: closing"));
+        log_P(PSTR("Motor: closing"), NULL);
     }
 }
 
@@ -152,9 +157,7 @@ static void leak_update(void)
             if (leak_wet_cnt[i] >= LEAK_CONFIRM_TICKS && !(leak_mask & bit))
             {
                 leak_mask |= bit;
-                transmitString_F(PSTR("\n\rSensor "));
-                transmitByte((uint8_t)leak_cfg[i].tag);
-                transmitString_F(PSTR(": WET"));
+                log_c(PSTR("Sensor "), leak_cfg[i].tag, PSTR(": WET"));
             }
         }
         else
@@ -167,9 +170,7 @@ static void leak_update(void)
             if (leak_dry_cnt[i] >= LEAK_RELEASE_TICKS && (leak_mask & bit))
             {
                 leak_mask &= (uint8_t)~bit;
-                transmitString_F(PSTR("\n\rSensor "));
-                transmitByte((uint8_t)leak_cfg[i].tag);
-                transmitString_F(PSTR(": dry"));
+                log_c(PSTR("Sensor "), leak_cfg[i].tag, PSTR(": dry"));
             }
         }
     }
@@ -213,10 +214,10 @@ static void valve_pos_update(void)
         valve_pos = valve_pos_candidate;
         switch (valve_pos)
         {
-            case POS_OPEN:   transmitString_F(PSTR("\n\r->Valve is opened."));  break;
-            case POS_CLOSED: transmitString_F(PSTR("\n\r->Valve is closed."));  break;
-            case POS_FAULT:  transmitString_F(PSTR("\n\r->Both limit switches active!")); break;
-            default:         transmitString_F(PSTR("\n\r->Valve between end positions.")); break;
+            case POS_OPEN:   log_P(PSTR("Valve position: OPEN"), NULL);   break;
+            case POS_CLOSED: log_P(PSTR("Valve position: CLOSED"), NULL); break;
+            case POS_FAULT:  log_P(PSTR("Valve position: both limit switches active!"), NULL); break;
+            default:         log_P(PSTR("Valve position: between end positions"), NULL); break;
         }
     }
 }
@@ -269,55 +270,60 @@ static bool button_take(button_t *b)
     return e;
 }
 
+#if USE_LCD
 /* ======================================================================= */
 /*  LCD                                                                    */
 /* ======================================================================= */
 
-static char     lcd_cache[LCD_ROWS][LCD_COLS + 1];
+/*
+ * RAM is scarce (512 B): instead of keeping a copy of every row we keep a
+ * 16-bit checksum per row, and one shared line buffer.
+ */
+static uint16_t lcd_row_sum[LCD_ROWS];
+static char     lcd_buf[LCD_COLS + 1];
 static uint32_t lcd_last_try;
 
 static void lcd_cache_invalidate(void)
 {
-    memset(lcd_cache, 0, sizeof(lcd_cache));
+    memset(lcd_row_sum, 0xFF, sizeof(lcd_row_sum));
 }
 
-/* Draws a line only if it changed. text is padded with spaces to 20 chars. */
-static void lcd_line(uint8_t row, const char *text)
+/* Pads lcd_buf to 20 chars and draws it, only if the row changed */
+static void lcd_commit(uint8_t row)
 {
-    char buf[LCD_COLS + 1];
-    uint8_t i = 0;
+    uint8_t  i = (uint8_t)strnlen(lcd_buf, LCD_COLS);
+    uint16_t sum = 0;
 
-    while (i < LCD_COLS && text[i] != '\0')
-    {
-        buf[i] = text[i];
-        i++;
-    }
     while (i < LCD_COLS)
     {
-        buf[i++] = ' ';
+        lcd_buf[i++] = ' ';
     }
-    buf[LCD_COLS] = '\0';
+    lcd_buf[LCD_COLS] = '\0';
 
-    if (!lcd_is_ok() || strcmp(buf, lcd_cache[row]) == 0)
+    for (i = 0; i < LCD_COLS; i++)
+    {
+        sum = (uint16_t)((sum << 1) | (sum >> 15)) ^ (uint8_t)lcd_buf[i];
+    }
+
+    if (!lcd_is_ok() || sum == lcd_row_sum[row])
     {
         return;
     }
 
     lcd_goto(row, 0);
-    lcd_print(buf);
+    lcd_print(lcd_buf);
 
     if (lcd_is_ok())
     {
-        strcpy(lcd_cache[row], buf);
+        lcd_row_sum[row] = sum;
     }
 }
 
 static void lcd_line_P(uint8_t row, const char *text_P)
 {
-    char buf[LCD_COLS + 1];
-    strncpy_P(buf, text_P, LCD_COLS);
-    buf[LCD_COLS] = '\0';
-    lcd_line(row, buf);
+    strncpy_P(lcd_buf, text_P, LCD_COLS);
+    lcd_buf[LCD_COLS] = '\0';
+    lcd_commit(row);
 }
 
 static void lcd_start(void)
@@ -327,17 +333,16 @@ static void lcd_start(void)
 
     if (lcd_init())
     {
-        transmitString_F(PSTR("\n\rLCD: ok"));
+        log_P(PSTR("LCD: ok"), NULL);
     }
     else
     {
-        transmitString_F(PSTR("\n\rLCD: not responding"));
+        log_P(PSTR("LCD: not responding"), NULL);
     }
 }
 
 static void lcd_update(void)
 {
-    char buf[LCD_COLS + 1];
     uint8_t i, n;
 
     if (!lcd_is_ok())
@@ -352,7 +357,8 @@ static void lcd_update(void)
         }
     }
 
-    lcd_line_P(0, PSTR("Leak Detector v" FW_VERSION));
+    lcd_line_P(0, proto_link_ok() ? PSTR("LeakDet v" FW_VERSION " ESP:+")
+                                  : PSTR("LeakDet v" FW_VERSION " ESP:-"));
 
     /* Row 1: valve */
     switch (ctrl_motor())
@@ -377,18 +383,18 @@ static void lcd_update(void)
     }
     else
     {
-        strcpy_P(buf, PSTR("Leak: "));
-        n = (uint8_t)strlen(buf);
+        strcpy_P(lcd_buf, PSTR("Leak: "));
+        n = (uint8_t)strlen(lcd_buf);
         for (i = 0; i < LEAK_COUNT && n < LCD_COLS - 1; i++)
         {
             if (leak_mask & (1U << i))
             {
-                buf[n++] = leak_cfg[i].tag;
-                buf[n++] = ' ';
+                lcd_buf[n++] = leak_cfg[i].tag;
+                lcd_buf[n++] = ' ';
             }
         }
-        buf[n] = '\0';
-        lcd_line(2, buf);
+        lcd_buf[n] = '\0';
+        lcd_commit(2);
     }
 
     /* Row 3: status */
@@ -415,16 +421,21 @@ static void lcd_update(void)
     }
 }
 
+#else
+static void lcd_start(void)  { }
+static void lcd_update(void) { }
+#endif /* USE_LCD */
+
 /* ======================================================================= */
 /*  Init                                                                   */
 /* ======================================================================= */
 
 static void report_reset_cause(uint8_t mcucsr)
 {
-    if (mcucsr & (1 << WDRF))  transmitString_F(PSTR("\n\rReset: WATCHDOG"));
-    if (mcucsr & (1 << BORF))  transmitString_F(PSTR("\n\rReset: brown-out"));
-    if (mcucsr & (1 << EXTRF)) transmitString_F(PSTR("\n\rReset: external"));
-    if (mcucsr & (1 << PORF))  transmitString_F(PSTR("\n\rReset: power-on"));
+    if (mcucsr & (1 << WDRF))  log_P(PSTR("Reset: WATCHDOG"), NULL);
+    if (mcucsr & (1 << BORF))  log_P(PSTR("Reset: brown-out"), NULL);
+    if (mcucsr & (1 << EXTRF)) log_P(PSTR("Reset: external"), NULL);
+    if (mcucsr & (1 << PORF))  log_P(PSTR("Reset: power-on"), NULL);
 }
 
 static void init_devices(void)
@@ -445,6 +456,15 @@ static void init_devices(void)
     timer2_init_1ms();
 
     sei();
+}
+
+static void fill_status(proto_status_t *st)
+{
+    st->state     = ctrl_state();
+    st->pos       = valve_pos;
+    st->leak_mask = leak_mask;
+    st->fault     = ctrl_fault();
+    st->alarm     = ctrl_alarm();
 }
 
 /* true once every period_ms; no catch-up bursts after a long stall */
@@ -474,16 +494,21 @@ int main(void)
     uint32_t t_logic = 0;
     uint32_t t_button = 0;
     ctrl_inputs_t in;
+    proto_status_t st;
 
     MCUCSR = 0;
     wdt_enable(WDTO_2S);
 
     init_devices();
 
-    transmitString_F(PSTR("\n\r\n\r****************************************************"));
-    transmitString_F(PSTR("\n\r         Leak Detector is started. V." FW_VERSION));
-    transmitString_F(PSTR("\n\r****************************************************"));
+    transmitString_F(PSTR("\r\n"));
+    log_P(PSTR("**************************************"), NULL);
+    log_P(PSTR("  Leak Detector started. V." FW_VERSION), NULL);
+    log_P(PSTR("  Type $? for the list of commands"), NULL);
+    log_P(PSTR("**************************************"), NULL);
     report_reset_cause(mcucsr);
+    proto_init();
+    proto_send_hello();
 
     pwm_set(LCD_BRIGHTNESS);
     lcd_start();
@@ -496,6 +521,9 @@ int main(void)
     while (1)
     {
         wdt_reset();
+
+        fill_status(&st);
+        proto_poll(millis(), &st);
 
         if (every(&t_button, BUTTON_PERIOD_MS))
         {
@@ -510,11 +538,15 @@ int main(void)
 
             in.leak_mask = leak_mask;
             in.pos       = valve_pos;
-            in.btn_reset = button_take(&btn_reset);
-            in.btn_close = button_take(&btn_close);
+            /* "|" (not "||") so that both events are always consumed */
+            in.btn_reset = button_take(&btn_reset) | proto_take_open();
+            in.btn_close = button_take(&btn_close) | proto_take_close();
             in.now_ms    = millis();
 
             ctrl_step(&in);
+
+            fill_status(&st);
+            proto_tick(in.now_ms, &st);
 
             lcd_update();
         }

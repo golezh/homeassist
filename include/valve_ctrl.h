@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __AVR__
 #include <avr/pgmspace.h>
@@ -78,11 +79,12 @@ void        ctrl_step(const ctrl_inputs_t *in);
 sys_state_t ctrl_state(void);
 fault_t     ctrl_fault(void);
 bool        ctrl_alarm(void);
+const char *ctrl_state_name_P(sys_state_t st);   // name in flash
 motor_dir_t ctrl_motor(void);
 
 /* Hooks, implemented by the application */
 void hal_motor(motor_dir_t dir);
 void hal_alarm_store(bool latched);
-void hal_log_P(const char *msg);
+void hal_log_P(const char *msg_P, const char *arg_P);   // one log line, arg may be NULL
 
 #endif // VALVE_CTRL_H

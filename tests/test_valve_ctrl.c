@@ -7,7 +7,7 @@
 static motor_dir_t hw_motor=MOTOR_STOP; static int ee=0;
 void hal_motor(motor_dir_t d){ hw_motor=d; }
 void hal_alarm_store(bool l){ ee=l; }
-void hal_log_P(const char*m){ (void)m; /*printf("%s",m);*/ }
+void hal_log_P(const char*m, const char*a){ (void)m; (void)a; }
 static uint32_t now=0; static ctrl_inputs_t in;
 static void tick(void){ now+=200; in.now_ms=now; ctrl_step(&in); in.btn_reset=in.btn_close=false; }
 static void ticks(int n){ while(n--) tick(); }

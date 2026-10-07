@@ -2,6 +2,7 @@
 #define RELAY_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 // 1 = relay ON by output HIGH
 // 0 = relay ON by output LOW
@@ -12,6 +13,9 @@ void relay_on(uint8_t index);
 void relay_off(uint8_t index);
 void relay_all_off(void);
 void relay_only(uint8_t index);
+
+bool    relay_is_on(uint8_t index);
+uint8_t relay_mask(void);   // bit N = relay N is on
 
 uint8_t relay_count(void);
 

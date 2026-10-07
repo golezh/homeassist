@@ -23,7 +23,7 @@ static uint32_t    s_motion_start;
 static uint8_t     s_init_ticks;
 static bool        s_fault_close_tried;
 
-static const char *state_name_P(sys_state_t st)
+const char *ctrl_state_name_P(sys_state_t st)
 {
     switch (st)
     {
@@ -45,8 +45,7 @@ static void set_state(sys_state_t st)
         return;
     }
     s_state = st;
-    hal_log_P(PSTR("\n\rState -> "));
-    hal_log_P(state_name_P(st));
+    hal_log_P(PSTR("State -> "), ctrl_state_name_P(st));
 }
 
 static void motor(motor_dir_t dir, uint32_t now)
@@ -79,9 +78,9 @@ static void enter_fault(fault_t f, uint32_t now)
 
     switch (f)
     {
-        case FAULT_OPEN_TIMEOUT:  hal_log_P(PSTR("\n\rFAULT: valve opening timeout")); break;
-        case FAULT_CLOSE_TIMEOUT: hal_log_P(PSTR("\n\rFAULT: valve closing timeout")); break;
-        case FAULT_SWITCHES:      hal_log_P(PSTR("\n\rFAULT: both limit switches active")); break;
+        case FAULT_OPEN_TIMEOUT:  hal_log_P(PSTR("FAULT: valve opening timeout"), NULL); break;
+        case FAULT_CLOSE_TIMEOUT: hal_log_P(PSTR("FAULT: valve closing timeout"), NULL); break;
+        case FAULT_SWITCHES:      hal_log_P(PSTR("FAULT: both limit switches active"), NULL); break;
         default: break;
     }
     set_state(ST_FAULT);
@@ -104,7 +103,7 @@ void ctrl_init(bool alarm_latched)
 
     if (alarm_latched)
     {
-        hal_log_P(PSTR("\n\rAlarm latch restored from EEPROM"));
+        hal_log_P(PSTR("Alarm latch restored from EEPROM"), NULL);
     }
 }
 
@@ -118,7 +117,7 @@ void ctrl_step(const ctrl_inputs_t *in)
     {
         s_alarm = true;
         hal_alarm_store(true);
-        hal_log_P(PSTR("\n\rLEAK DETECTED! Alarm latched"));
+        hal_log_P(PSTR("LEAK DETECTED! Alarm latched"), NULL);
     }
 
     switch (s_state)
@@ -164,7 +163,7 @@ void ctrl_step(const ctrl_inputs_t *in)
             }
             else if (in->pos == POS_CLOSED)
             {
-                hal_log_P(PSTR("\n\rValve was closed externally"));
+                hal_log_P(PSTR("Valve was closed externally"), NULL);
                 set_state(ST_CLOSED);
             }
             break;
@@ -223,20 +222,20 @@ void ctrl_step(const ctrl_inputs_t *in)
             if (in->pos == POS_OPEN || in->pos == POS_UNKNOWN)
             {
                 /* valve left the closed position (opened by hand?) */
-                hal_log_P(PSTR("\n\rValve not closed in ALARM, closing again"));
+                hal_log_P(PSTR("Valve not closed in ALARM, closing again"), NULL);
                 start_close(now);
             }
             else if (in->btn_reset)
             {
                 if (leak)
                 {
-                    hal_log_P(PSTR("\n\rReset denied: sensor still wet"));
+                    hal_log_P(PSTR("Reset denied: sensor still wet"), NULL);
                 }
                 else
                 {
                     s_alarm = false;
                     hal_alarm_store(false);
-                    hal_log_P(PSTR("\n\rAlarm reset by user"));
+                    hal_log_P(PSTR("Alarm reset by user"), NULL);
                     start_open(now);
                 }
             }
@@ -247,7 +246,7 @@ void ctrl_step(const ctrl_inputs_t *in)
             {
                 /* Rule 4: one more attempt to close on leak */
                 s_fault_close_tried = true;
-                hal_log_P(PSTR("\n\rFAULT + leak: retry closing"));
+                hal_log_P(PSTR("FAULT + leak: retry closing"), NULL);
                 start_close(now);
             }
             else if (s_alarm && in->pos == POS_CLOSED)
@@ -257,7 +256,7 @@ void ctrl_step(const ctrl_inputs_t *in)
             }
             else if (in->btn_reset)
             {
-                hal_log_P(PSTR("\n\rFault reset by user"));
+                hal_log_P(PSTR("Fault reset by user"), NULL);
                 s_fault = FAULT_NONE;
                 s_fault_close_tried = false;
                 s_init_ticks = 0;

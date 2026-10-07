@@ -9,7 +9,9 @@
 
 void uart0_init(void);
 
-uint8_t receiveByte(void);
+int16_t uart_getc(void);             // non-blocking, -1 = no data
+uint8_t uart_rx_overflow_take(void); // lost RX bytes since last call
+uint8_t receiveByte(void);           // blocking
 void transmitByte(uint8_t data);
 
 void transmitHex(uint8_t dataType, uint32_t data);

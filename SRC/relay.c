@@ -1,6 +1,7 @@
 #include "relay.h"
 
 #include <avr/io.h>
+#include <avr/pgmspace.h>
 
 // ------------------------------------------------------------
 // Relay pin definitions
@@ -25,7 +26,8 @@ typedef struct
     uint8_t pin;
 } Relay_t;
 
-static const Relay_t relays[] =
+/* Table lives in flash to save RAM */
+static const Relay_t relays[] PROGMEM =
 {
     { &DDRA, &PORTA, RELAY1 },
     { &DDRA, &PORTA, RELAY2 },
@@ -37,6 +39,21 @@ static const Relay_t relays[] =
 };
 
 #define RELAY_COUNT_INTERNAL ((uint8_t)(sizeof(relays) / sizeof(relays[0])))
+
+static volatile uint8_t *relay_port(uint8_t i)
+{
+    return (volatile uint8_t *)pgm_read_word(&relays[i].port);
+}
+
+static volatile uint8_t *relay_ddr(uint8_t i)
+{
+    return (volatile uint8_t *)pgm_read_word(&relays[i].ddr);
+}
+
+static uint8_t relay_bit(uint8_t i)
+{
+    return (uint8_t)(1U << pgm_read_byte(&relays[i].pin));
+}
 
 uint8_t relay_count(void)
 {
@@ -52,7 +69,7 @@ void relay_init(void)
         // First set the "off" level in PORT, only then switch the pin to
         // output. Otherwise an active-LOW relay clicks on for a moment.
         relay_off(i);
-        *relays[i].ddr |= (uint8_t)(1U << relays[i].pin);
+        *relay_ddr(i) |= relay_bit(i);
     }
 }
 
@@ -64,9 +81,9 @@ void relay_on(uint8_t index)
     }
 
 #if RELAY_ACTIVE_HIGH
-    *relays[index].port |= (uint8_t)(1U << relays[index].pin);
+    *relay_port(index) |= relay_bit(index);
 #else
-    *relays[index].port &= (uint8_t)~(1U << relays[index].pin);
+    *relay_port(index) &= (uint8_t)~relay_bit(index);
 #endif
 }
 
@@ -78,10 +95,43 @@ void relay_off(uint8_t index)
     }
 
 #if RELAY_ACTIVE_HIGH
-    *relays[index].port &= (uint8_t)~(1U << relays[index].pin);
+    *relay_port(index) &= (uint8_t)~relay_bit(index);
 #else
-    *relays[index].port |= (uint8_t)(1U << relays[index].pin);
+    *relay_port(index) |= relay_bit(index);
 #endif
+}
+
+bool relay_is_on(uint8_t index)
+{
+    bool level;
+
+    if (index >= RELAY_COUNT_INTERNAL)
+    {
+        return false;
+    }
+
+    level = (*relay_port(index) & relay_bit(index)) != 0;
+
+#if RELAY_ACTIVE_HIGH
+    return level;
+#else
+    return !level;
+#endif
+}
+
+uint8_t relay_mask(void)
+{
+    uint8_t i;
+    uint8_t mask = 0;
+
+    for (i = 0; i < RELAY_COUNT_INTERNAL; i++)
+    {
+        if (relay_is_on(i))
+        {
+            mask |= (uint8_t)(1U << i);
+        }
+    }
+    return mask;
 }
 
 void relay_all_off(void)

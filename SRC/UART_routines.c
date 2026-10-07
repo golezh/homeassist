@@ -3,23 +3,32 @@
 // F_CPU = 4 MHz
 // Baud rate = 19200
 // Format = 8N1
+//
+// RX is interrupt driven (ring buffer), TX is blocking.
 //**************************************************************
 
 #include "UART_routines.h"
 
 #include <avr/io.h>
+#include <avr/interrupt.h>
 #include <avr/pgmspace.h>
+#include <util/atomic.h>
 #include <stdint.h>
 
 #define UART_BAUD       19200UL
 #define UART_UBRR_VALUE ((F_CPU / (16UL * UART_BAUD)) - 1UL)
 
+/* Must be a power of two */
+#define UART_RX_BUF_SIZE 32U
+#define UART_RX_MASK     (UART_RX_BUF_SIZE - 1U)
+
+static volatile uint8_t rx_buf[UART_RX_BUF_SIZE];
+static volatile uint8_t rx_head;      // written by ISR
+static volatile uint8_t rx_tail;      // read by main loop
+static volatile uint8_t rx_overflow;  // count of lost bytes
+
 //**************************************************
-// UART0 initialize
-// baud rate: 19200, F_CPU = 4 MHz
-// char size: 8 bit
-// parity: none
-// stop bits: 1
+// UART0 initialize: 19200 8N1, RX interrupt enabled
 //**************************************************
 void uart0_init(void)
 {
@@ -37,21 +46,78 @@ void uart0_init(void)
     // For ATmega8535, URSEL must be 1 when writing UCSRC
     UCSRC = (1 << URSEL) | (1 << UCSZ1) | (1 << UCSZ0);
 
-    // Enable receiver and transmitter
-    UCSRB = (1 << RXEN) | (1 << TXEN);
+    rx_head = 0;
+    rx_tail = 0;
+    rx_overflow = 0;
+
+    // Enable receiver, transmitter and RX complete interrupt
+    UCSRB = (1 << RXEN) | (1 << TXEN) | (1 << RXCIE);
+}
+
+ISR(USART_RX_vect)
+{
+    uint8_t status = UCSRA;
+    uint8_t data = UDR;
+    uint8_t next = (uint8_t)((rx_head + 1U) & UART_RX_MASK);
+
+    if (status & ((1 << FE) | (1 << DOR) | (1 << PE)))
+    {
+        // framing / overrun error: replace by a byte the parser rejects
+        data = 0x00;
+    }
+
+    if (next == rx_tail)
+    {
+        rx_overflow++;      // buffer full, byte lost
+        return;
+    }
+
+    rx_buf[rx_head] = data;
+    rx_head = next;
 }
 
 //**************************************************
-// Receive a single byte
+// Non-blocking read. Returns -1 if no data.
+//**************************************************
+int16_t uart_getc(void)
+{
+    uint8_t c;
+
+    if (rx_head == rx_tail)
+    {
+        return -1;
+    }
+
+    c = rx_buf[rx_tail];
+    rx_tail = (uint8_t)((rx_tail + 1U) & UART_RX_MASK);
+    return c;
+}
+
+uint8_t uart_rx_overflow_take(void)
+{
+    uint8_t n;
+
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+    {
+        n = rx_overflow;
+        rx_overflow = 0;
+    }
+    return n;
+}
+
+//**************************************************
+// Receive a single byte (blocking)
 //**************************************************
 uint8_t receiveByte(void)
 {
-    while ((UCSRA & (1 << RXC)) == 0)
+    int16_t c;
+
+    while ((c = uart_getc()) < 0)
     {
         // Wait for incoming data
     }
 
-    return UDR;
+    return (uint8_t)c;
 }
 
 //**************************************************
