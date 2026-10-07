@@ -55,8 +55,9 @@ CFLAGS      ?= -Os -Wall -Wextra -std=gnu99
 CFLAGS      += $(MCU_FLAGS) $(CPPFLAGS)
 CFLAGS      += -ffunction-sections -fdata-sections
 CFLAGS      += -MMD -MP
-
+CFLAGS      += -flto                         # додати
 LDFLAGS     ?= $(MCU_FLAGS)
+LDFLAGS     += -Os -flto                     
 LDFLAGS     += -Wl,--gc-sections
 LDFLAGS     += -Wl,-Map=$(BUILD_DIR)/$(TARGET).map
 
